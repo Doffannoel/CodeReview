@@ -1,0 +1,161 @@
+name: graphmethod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: graphmethod-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: codereviewer
+      POSTGRES_USER: codereviewer
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codereviewer -d codereviewer"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - graphmethod-internal
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: "0.50"
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: graphmethod-neo4j
+    restart: unless-stopped
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        export NEO4J_AUTH="neo4j/$$(cat /run/secrets/neo4j_password)"
+        exec /startup/docker-entrypoint.sh neo4j
+    environment:
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    secrets:
+      - neo4j_password
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "cypher-shell -u neo4j -p \"$$(cat /run/secrets/neo4j_password)\" 'RETURN 1' >/dev/null 2>&1",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    volumes:
+      - neo4j-data:/data
+    networks:
+      - graphmethod-internal
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.00"
+
+  api:
+    image: ${GRAPHMETHOD_IMAGE:-ghcr.io/im-corporation/graphmethod-code-reviewer}:${IMAGE_TAG:-latest}
+    container_name: graphmethod-api
+    restart: unless-stopped
+    env_file:
+      - ${GRAPHMETHOD_ENV_FILE:-./runtime.env}
+    environment: &app-environment
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: codereviewer
+      DATABASE_USERNAME: codereviewer
+      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD_FILE: /run/secrets/neo4j_password
+      GITHUB_PRIVATE_KEY_BASE64_FILE: /run/secrets/github_private_key_base64
+      GITHUB_WEBHOOK_SECRET_FILE: /run/secrets/github_webhook_secret
+      LLM_API_KEY_FILE: /run/secrets/llm_api_key
+    secrets: &app-secrets
+      - postgres_password
+      - neo4j_password
+      - github_private_key_base64
+      - github_webhook_secret
+      - llm_api_key
+    command: uvicorn codereviewer.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    networks:
+      - graphmethod-internal
+      - platform-internal
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: "0.75"
+
+  worker:
+    image: ${GRAPHMETHOD_IMAGE:-ghcr.io/im-corporation/graphmethod-code-reviewer}:${IMAGE_TAG:-latest}
+    container_name: graphmethod-worker
+    restart: unless-stopped
+    env_file:
+      - ${GRAPHMETHOD_ENV_FILE:-./runtime.env}
+    environment: *app-environment
+    secrets: *app-secrets
+    command: python -m codereviewer.worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    networks:
+      - graphmethod-internal
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "1.00"
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  neo4j_password:
+    file: ./secrets/neo4j_password
+  github_private_key_base64:
+    file: ./secrets/github_private_key_base64
+  github_webhook_secret:
+    file: ./secrets/github_webhook_secret
+  llm_api_key:
+    file: ./secrets/llm_api_key
+
+volumes:
+  postgres-data:
+    name: graphmethod-postgres-data
+  neo4j-data:
+    name: graphmethod-neo4j-data
+
+networks:
+  graphmethod-internal:
+    name: graphmethod-internal
+  platform-internal:
+    external: true
+    name: platform-internal

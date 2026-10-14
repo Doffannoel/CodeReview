@@ -1,0 +1,61 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+dist/
+build/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Deployment documentation kept locally
+/DEPLOYMENT_HOSTINGER.md
+/KONG_MANAGER_TLS_ROUTING.md
+
+# Local configuration and runtime secrets
+.env.*
+!.env.example
+!.env.*.example
+deploy/hostinger/runtime.env
+deploy/hostinger/secrets/
+
+# Environments, tooling and generated analysis
+venv/
+env/
+.eggs/
+.idea/
+.vscode/
+.codex/
+.agents/
+graphify-out/
+.ipynb_checkpoints/
+
+# Test and analysis artifacts
+.pytest-tmp/
+.mypy_cache/
+.pyre/
+.hypothesis/
+.tox/
+.nox/
+.coverage.*
+coverage.xml
+junit.xml
+
+# Temporary files and OS metadata
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+graphify-out/
+
+.pdf
+.md

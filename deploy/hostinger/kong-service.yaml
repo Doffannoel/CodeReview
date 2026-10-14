@@ -1,0 +1,24 @@
+# Tambahkan item ini ke daftar `services:` pada kong-gateway/kong.yaml jika Service
+# dan Route ingin dikelola dari Git. Domain ini khusus GraphMethod dan tidak berbagi
+# route dengan Jenkins. Tambahkan juga reviewer.imcorp.tech ke hosts pada
+# `acme-challenge-route` karena certificate diterbitkan oleh ACME HTTP-01 Kong.
+- name: graphmethod-api
+  protocol: http
+  host: graphmethod-api
+  port: 8000
+  connect_timeout: 5000
+  read_timeout: 10000
+  write_timeout: 10000
+  retries: 2
+  routes:
+    - name: graphmethod-github-app-webhook
+      hosts:
+        - marmut.imcorp.tech
+      paths:
+        - /webhooks/github
+        - /health/live
+        - /health/ready
+      protocols:
+        - https
+      strip_path: false
+      preserve_host: true
