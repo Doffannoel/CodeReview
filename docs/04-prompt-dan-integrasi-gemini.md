@@ -15,7 +15,7 @@ Base SHA: ...
 Head SHA: ...
 
 [DIFF]
-<unified diff, dipotong bila melebihi budget>
+<unified diff lengkap untuk file yang tidak dikecualikan>
 
 [STRUCTURAL GRAPH CONTEXT]
 Context ID: ...
@@ -32,11 +32,15 @@ For demonstrable logic or compatibility conflicts, identify the exact existing
 file, symbol, configuration, API, contract, or flow that conflicts.
 ```
 
-Instruksi meminta model memperlakukan isi repository/PR sebagai untrusted data, hanya mereview diff/context yang diberikan, fokus pada correctness/security/reliability/concurrency/maintainability, menghindari style-only feedback, dan tidak membuat finding tanpa bukti.
+Instruksi memperlakukan isi repository/PR sebagai untrusted data, memeriksa defect
+dan standar SMP (termasuk penamaan dan guard clauses), serta meminta bukti sebelum
+menghasilkan temuan. Aturan lengkap tersedia dalam `rules.py`.
 
 ## Budget
 
-Diff mendapat 65% `CONTEXT_TOKEN_BUDGET`, minimal 1.000 estimated tokens. `trim_to_tokens()` memakai estimasi empat karakter per token dan memotong dari akhir. Context graph sebelumnya sudah dipilih dengan budget tersendiri. Metadata dan instruksi tidak dihitung eksplisit.
+Seluruh instruksi, preferensi, metadata PR, diff dan konteks dihitung dengan estimasi
+empat karakter per token. Konteks dipangkas dari prioritas terendah; diff utuh terlalu
+besar menggagalkan run. Metadata judul/deskripsi dibatasi 500/2000 karakter.
 
 ## Request Gemini
 
@@ -64,7 +68,8 @@ Payload konseptual:
 }
 ```
 
-Walau prompt memiliki bagian `[SYSTEM INSTRUCTION]`, implementasi mengirim semuanya sebagai satu content dengan role `user`; adapter belum memakai field system instruction terpisah dari API Gemini.
+Bagian sebelum `[PULL REQUEST]` dikirim sebagai `systemInstruction`; data PR/diff/konteks
+dikirim sebagai user content. Preferensi dalam bagian instruksi telah divalidasi tipe/nilainya.
 
 MIME type dan JSON Schema meminta structured output agar parsing tidak bergantung pada Markdown/regex. Parameter sampling `temperature`, `top_p`, dan `top_k` sengaja tidak dikirim karena sudah deprecated untuk Gemini 3.8 Flash.
 
@@ -111,11 +116,15 @@ Aturan Pydantic:
 - findings boleh kosong;
 - `supporting_context_ids` tersedia di schema, tetapi saat ini belum divalidasi terhadap context atau disimpan ke tabel finding.
 
-`MAX_FINDINGS` tidak dikirim sebagai angka literal. Prompt hanya menyebut “configured number”; batas yang benar-benar enforced adalah slicing `result.findings[:max_findings]` setelah model menjawab.
+Model diminta mengembalikan seluruh temuan. Confidence minimal 0,8 difilter sebelum
+deduplikasi dan perhitungan skor. `MAX_FINDINGS` dan config `max_findings` membatasi
+inline saja, sehingga batas tampilan tidak dapat menaikkan skor kualitas.
 
 ## Parsing response
 
-Adapter mengambil `payload.candidates[0].content.parts[0].text`, menjalankan `json.loads`, lalu memvalidasi ulang dengan `ModelReviewResponse.model_validate()`. `promptTokenCount` dan `candidatesTokenCount` menjadi input/output token metrics pada `ReviewResult`.
+Adapter menggabungkan text parts non-thought dari candidate pertama, menolak finish
+reason selain STOP, memparse JSON dan memvalidasi Pydantic. Setiap file eligible harus
+memiliki file_reviews entry sebelum coverage dinyatakan lengkap. Token usage dicatat.
 
 Structured output memastikan bentuk data, bukan kebenaran klaim. Orkestrator kemudian membatasi jumlah, menormalisasi path, memverifikasi changed line/range, menghapus suggestion yang tidak bisa inline, dan mendeduplikasi fingerprint.
 

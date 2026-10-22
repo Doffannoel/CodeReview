@@ -27,6 +27,7 @@ def test_invalid_line_becomes_summary_finding_and_duplicates_are_removed() -> No
         title="Wrong line",
         explanation="This cannot be placed inline.",
         suggestion="replacement",
+        confidence=0.9,
     )
     result = ReviewResult(summary="Done", findings=[finding, finding])
 
@@ -62,6 +63,7 @@ def test_valid_line_remains_inline() -> None:
                 category="reliability",
                 title="Potential failure",
                 explanation="The call can fail.",
+                confidence=0.9,
                 conflict=ConflictDetail(
                     target="worker.py::run",
                     description="The caller expects this operation not to raise.",
@@ -79,7 +81,7 @@ def test_valid_line_remains_inline() -> None:
         "abcdef123456789",
         diff,
     )
-    assert "#Code Review Results" in summary
+    assert "# Code Review Results" in summary
     assert "## Summary" in summary
     assert "## PR Detail" in summary
     assert "`111111111111` → `abcdef123456`" in summary

@@ -19,8 +19,8 @@ class ConflictDetail(BaseModel):
 
 class Finding(BaseModel):
     path: str
-    start_line: int | None = None
-    end_line: int | None = None
+    start_line: int | None = Field(default=None, ge=1)
+    end_line: int | None = Field(default=None, ge=1)
     severity: Literal["low", "medium", "high", "critical"]
     category: str
     title: str
@@ -72,7 +72,7 @@ class ModelReviewResponse(BaseModel):
             "on the supplied diff and structural context."
         )
     )
-    findings: list[Finding] = Field(default_factory=list)
+    findings: list[Finding]
 
 
 class ProviderError(RuntimeError):

@@ -4,31 +4,38 @@
 
 Unified diff menjelaskan perubahan lokal, tetapi defect dapat bergantung pada caller, implementation, base class, reference, atau test di luar diff. Graph retrieval menambahkan potongan kode yang terhubung secara struktural tanpa mengirim seluruh repository.
 
-Sistem tidak memakai embedding/vector similarity. Retrieval berbasis AST Python, relasi nama, lokasi changed line, dan traversal Neo4j.
+Sistem tidak memakai embedding/vector similarity. Retrieval memakai Tree-sitter
+Python/JS/TS, resolusi import/nama, lokasi changed line, dan traversal Neo4j.
 
 ## Membentuk snapshot
 
 Jika `Snapshot` untuk `repository_id:head_sha` belum `ready`, worker:
 
 1. Meminta recursive Git tree pada head SHA.
-2. Memilih blob `.py` dan mengabaikan cache, virtual environment, build output, serta file excluded lain di `github.py`.
+2. Memilih blob `.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs`, `.mts`, `.cts`
+   dan mengabaikan dependency/build output serta `ignore_paths` repo.
 3. Menolak tree GitHub yang truncated, file di atas `MAX_SOURCE_FILE_BYTES`, atau jumlah file di atas `MAX_REPOSITORY_FILES`.
 4. Mengunduh blob base64 dan decode UTF-8.
-5. Memparse memakai `ast.parse`; file dengan `SyntaxError` dilewati.
+5. Memparse memakai grammar Tree-sitter; kesalahan parsing menggagalkan indexing.
 
 ## Ekstraksi simbol dan relasi
 
-`PythonAstIndexer` membuat simbol class, function, method, dan test function berprefix `test_`. Simbol menyimpan path, qualified name, kind, signature, source segment, line range, dan content hash. Stable ID dasarnya `path:qualified_name`; version ID menambahkan repository dan snapshot SHA.
+`TreeSitterIndexer` membuat simbol class, function, method, arrow function, callback,
+test dan pemanggilan tingkat module. Simbol menyimpan path, qualified name, signature,
+source dan rentang baris. Node version mendapat label Function/Class sesuai jenis.
+Snapshot mencakup head dan base SHA (untuk penghapusan), versi indexer serta hash ignore paths.
 
 | Relasi | Sumber |
 |---|---|
 | `CALLS` | Call expression di function/method. |
 | `TESTS` | Call expression dari test function. |
 | `EXTENDS` | Base class biasa. |
-| `IMPLEMENTS` | Base yang nama akhirnya menyerupai Protocol/Interface. |
-| `REFERENCES` | Nama yang dibaca dalam body simbol. |
+| `IMPLEMENTS` | Klausul TypeScript implements. |
+| `REFERENCES` | Didukung traversal untuk snapshot lama; tidak diekstrak indexer baru. |
 
-Resolusi target konservatif: leaf name harus unik secara global, atau unik di file yang sama. Dynamic dispatch, alias kompleks, monkey patching, dan refleksi tidak dapat diselesaikan penuh.
+Import/alias relatif, namespace dan CommonJS sederhana diresolusikan dahulu.
+Fallback leaf name harus unik dalam file atau repository. Dynamic dispatch, alias
+tsconfig, re-export kompleks, monkey patching dan refleksi tidak diselesaikan penuh.
 
 ## Bentuk graph
 
@@ -85,10 +92,12 @@ Path multi-hop memakai skor relasi tertinggi, dikurangi 0,18 untuk setiap hop se
 Kandidat diurutkan berdasarkan skor menurun lalu token count menaik. Pemilihan greedy melewati simbol duplikat atau item yang tidak lagi muat. Budget graph:
 
 ```text
-max(1.000, CONTEXT_TOKEN_BUDGET - estimated_diff_tokens)
+CONTEXT_TOKEN_BUDGET - estimated_tokens(instructions + repo preferences + PR metadata + full diff)
 ```
 
-`build_prompt()` secara terpisah membatasi diff ke sekitar 65% total budget. Karena keduanya memakai heuristik karakter/4 dan metadata/instruksi tidak dihitung, total prompt adalah perkiraan, bukan hard tokenizer limit.
+Context dipilih lalu dilepas dari prioritas terendah sampai seluruh prompt muat dalam
+budget estimasi karakter/4. Diff tidak dipotong; jika diff dan instruksi saja melampaui
+budget, run gagal dan tidak menghasilkan status lulus.
 
 ## Audit dan fallback
 

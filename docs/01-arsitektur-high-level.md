@@ -12,7 +12,7 @@ flowchart LR
     API -->|enqueue| PG[(PostgreSQL)]
     WK[Review Worker] -->|claim / persist| PG
     WK -->|metadata, diff, sources| GH
-    WK --> IDX[Python AST Indexer]
+    WK --> IDX[Tree-sitter Python JS TS Indexer]
     IDX --> NEO[(Neo4j)]
     WK -->|changed symbols + traversal| NEO
     WK -->|prompt + JSON schema| GEM[Gemini]
@@ -26,7 +26,7 @@ flowchart LR
 | PostgreSQL | Menyimpan delivery, job, run, kandidat context, finding, status, dan metrics. |
 | Worker | Mengorkestrasi GitHub, indexing, retrieval, model, persistence, publishing, dan retry. |
 | GitHub API | Memberi installation token, metadata PR, unified diff, snapshot source, dan endpoint publish. |
-| AST indexer | Mengekstrak simbol dan relasi statis Python tanpa menjalankan source. |
+| AST indexer | Mengekstrak simbol dan relasi Python/JS/TS melalui Tree-sitter tanpa menjalankan source. |
 | Neo4j | Menyimpan graph per repository/commit dan mencari context di sekitar simbol berubah. |
 | Gemini | Menghasilkan summary/findings dengan structured JSON output. |
 
@@ -50,7 +50,7 @@ sequenceDiagram
     W->>G: unified diff
     W->>W: parse + scope limits
     alt graph snapshot belum ready
-        W->>G: fetch eligible Python sources
+        W->>G: fetch eligible Python/JS/TS sources
         W->>W: AST parse + resolve relations
         W->>N: store snapshot graph
     end

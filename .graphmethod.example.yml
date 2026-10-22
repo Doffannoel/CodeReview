@@ -1,0 +1,17 @@
+# Place this file at .graphmethod.yml on the PR base branch.
+ignore_paths:
+  - "node_modules/**"
+  - "dist/**"
+  - "generated/**"
+  - "**/*.lock"
+review_language: id
+min_confidence: 0.8
+# Limits inline comments; all validated findings still affect the score.
+max_findings: 10
+quality_gate:
+  threshold: 80
+  penalties:
+    critical: 25
+    high: 10
+    medium: 5
+    low: 1

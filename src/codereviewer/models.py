@@ -3,7 +3,18 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -33,7 +44,16 @@ class ReviewJob(Base):
             "repository_id",
             "pull_request_number",
             "head_sha",
+            "request_key",
             name="uq_review_job_target",
+        ),
+        Index(
+            "uq_manual_review_request",
+            "repository_id",
+            "request_key",
+            unique=True,
+            postgresql_where=text("request_key <> 'automatic'"),
+            sqlite_where=text("request_key <> 'automatic'"),
         ),
     )
 
@@ -47,6 +67,9 @@ class ReviewJob(Base):
     repository: Mapped[str] = mapped_column(String(255), nullable=False)
     pull_request_number: Mapped[int] = mapped_column(Integer, nullable=False)
     head_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_key: Mapped[str] = mapped_column(
+        String(128), default="automatic", server_default="automatic"
+    )
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     attempt: Mapped[int] = mapped_column(Integer, default=0)
     available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -79,6 +102,17 @@ class ReviewRun(Base):
     job: Mapped[ReviewJob] = relationship(back_populates="runs")
     findings: Mapped[list[ReviewFinding]] = relationship(back_populates="run")
     contexts: Mapped[list[RetrievedContextRecord]] = relationship(back_populates="run")
+
+
+class ReviewEvaluation(Base):
+    __tablename__ = "review_evaluations"
+
+    run_id: Mapped[str] = mapped_column(ForeignKey("review_runs.id"), primary_key=True)
+    head_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    passed: Mapped[bool] = mapped_column(nullable=False)
+    details: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
 class ReviewFinding(Base):

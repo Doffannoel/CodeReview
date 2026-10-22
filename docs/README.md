@@ -1,5 +1,8 @@
 # Dokumentasi teknis GraphMethod
 
+Mulai dari [implementasi Master SRS 3.0.0](06-srs-implementation.md) untuk pemetaan
+kebutuhan, konfigurasi repo, quality gate, upgrade dan hasil verifikasi.
+
 GraphMethod adalah GitHub App tanpa frontend yang mereview pull request otomatis. Diff PR menjadi input utama, sedangkan potongan kode terkait dipilih melalui structural graph retrieval di Neo4j sebelum dikirim ke Gemini dalam satu prompt terstruktur.
 
 Dokumentasi ini menjelaskan implementasi yang ada saat ini, bukan rancangan hipotetis.
@@ -8,7 +11,7 @@ Dokumentasi ini menjelaskan implementasi yang ada saat ini, bukan rancangan hipo
 
 1. [Arsitektur high-level](01-arsitektur-high-level.md) — komponen runtime, trust boundary, dan alur end-to-end.
 2. [Desain low-level](02-desain-low-level.md) — modul, data model, state job, validasi, dan publishing.
-3. [Indexing dan graph retrieval](03-indexing-dan-graph-retrieval.md) — AST Python, graph Neo4j, scoring, dan budget context.
+3. [Indexing dan graph retrieval](03-indexing-dan-graph-retrieval.md) — Tree-sitter Python/JS/TS, Neo4j, scoring, dan budget context.
 4. [Prompt dan integrasi Gemini](04-prompt-dan-integrasi-gemini.md) — konstruksi prompt, request HTTP, schema, parsing, dan retry.
 5. [Operasional dan deployment](05-operasional-dan-deployment.md) — topologi, konfigurasi, CI/CD, observability, dan batasan.
 

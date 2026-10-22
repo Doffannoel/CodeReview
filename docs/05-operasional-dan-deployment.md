@@ -46,13 +46,14 @@ Kong hanya mengekspos webhook dan health endpoints melalui HTTPS. Worker, Postgr
 | `GRAPH_MAX_HOPS` | 2 | Radius traversal, dibatasi 1–2. |
 | `GRAPH_MAX_NODES_PER_SYMBOL` | 12 | Limit related context per seed. |
 | `CONTEXT_TOKEN_BUDGET` | 10000 | Target heuristik diff/context. |
-| `MAX_REPOSITORY_FILES` | 500 | Batas file Python snapshot. |
+| `MAX_REPOSITORY_FILES` | 500 | Batas file Python/JS/TS snapshot. |
 | `MAX_SOURCE_FILE_BYTES` | 250000 | Batas ukuran source. |
 | `MAX_CHANGED_FILES` | 30 | Batas file diff. |
 | `MAX_CHANGED_LINES` | 2000 | Batas baris tambah/hapus. |
-| `MAX_FINDINGS` | 10 | Batas pasca-model. |
+| `MAX_FINDINGS` | 10 | Batas komentar inline, bukan batas temuan untuk skor. |
 | `WORKER_POLL_SECONDS` | 2 | Poll ketika queue kosong. |
 | `WORKER_MAX_ATTEMPTS` | 3 | Batas total attempt. |
+| `WORKER_JOB_TIMEOUT_SECONDS` | 90 | Deadline satu attempt, sebelum retry. |
 | `DRY_RUN` | false | Melewati publishing GitHub saja. |
 
 Secret mendukung nilai langsung dari environment atau file melalui suffix `_FILE`; production memakai mode file.
@@ -69,7 +70,9 @@ Belum ada metrics exporter, distributed tracing, dead-letter queue terpisah, ata
 
 ## Skalabilitas
 
-`SKIP LOCKED` memungkinkan banyak worker pada PostgreSQL yang sama. Namun dua job dapat membangun snapshot yang sama secara bersamaan karena belum ada distributed lock khusus. Pengunduhan blob source berjalan satu per satu, dan tree yang truncated ditolak alih-alih dipaginasi.
+Claim memakai `SKIP LOCKED` dengan advisory lock transaksi singkat dan pembatasan
+satu job processing per PR. Blob diunduh maksimal delapan request paralel. Tree
+truncated ditolak. Snapshot commit sama dari PR berbeda masih dapat dibangun bersama.
 
 Traversal dibatasi dua hop. Prompt memakai budget heuristik, bukan tokenizer provider. Keduanya menahan biaya prototype tetapi perlu diukur ulang untuk repository besar.
 
@@ -85,11 +88,11 @@ Traversal dibatasi dua hop. Prompt memakai budget heuristik, bukan tokenizer pro
 
 ## Batasan implementasi
 
-- Full structural indexing hanya untuk Python.
+- Structural indexing Tree-sitter tersedia untuk Python/JS/TS dan JSX/TSX.
 - Resolusi relasi berbasis nama dan konservatif.
-- Schema DB dibuat dengan `metadata.create_all`; belum ada Alembic.
+- Upgrade schema PostgreSQL SRS tersedia saat startup; lihat prosedur di dokumen 06.
 - Hanya provider `gemini` yang terdaftar.
 - `RETRIEVAL_MODE` wajib `graph`.
-- Belum ada command manual `/review` atau Check Runs.
+- `/review`, Check Runs, konfigurasi repo dan threshold sudah tersedia.
 - Semua provider error memakai retry policy generik.
 - `supporting_context_ids` model belum menjadi audit finding di PostgreSQL.

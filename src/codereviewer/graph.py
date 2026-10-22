@@ -157,6 +157,10 @@ class GraphStore:
                     stable.name = symbol.name,
                     stable.kind = symbol.kind
                 MERGE (version:SymbolVersion {version_id: symbol.version_id})
+                FOREACH (_ IN CASE WHEN symbol.kind IN ['function', 'method', 'test']
+                         THEN [1] ELSE [] END | SET version:Function)
+                FOREACH (_ IN CASE WHEN symbol.kind IN ['class', 'interface']
+                         THEN [1] ELSE [] END | SET version:Class)
                 SET version.repository_id = $repository_id,
                     version.snapshot_sha = $sha,
                     version.symbol_id = symbol.stable_id,

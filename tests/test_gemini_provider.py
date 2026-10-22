@@ -87,6 +87,8 @@ async def test_gemini_provider_normalizes_structured_output() -> None:
     }
     assert deprecated_parameters.isdisjoint(request_payload["generationConfig"])
     assert request_payload["generationConfig"]["responseMimeType"] == "application/json"
+    assert "SQL Injection" in request_payload["systemInstruction"]["parts"][0]["text"]
+    assert request_payload["contents"][0]["parts"][0]["text"] == "review this"
     assert "key=" not in str(route.calls.last.request.url)
     assert route.calls.last.request.headers["x-goog-api-key"] == "secret"
 
@@ -112,19 +114,20 @@ async def test_gemini_provider_retries_service_unavailable(
                 json={
                     "candidates": [
                         {
-                                "content": {
-                                    "parts": [
-                                        {
-                                            "text": json.dumps(
-                                                {
-                                                    "summary": "Recovered.",
-                                                    "file_reviews": [],
-                                                    "impact": "No material impact.",
-                                                }
-                                            )
-                                        }
-                                    ]
-                                }
+                            "content": {
+                                "parts": [
+                                    {
+                                        "text": json.dumps(
+                                            {
+                                                "summary": "Recovered.",
+                                                "findings": [],
+                                                "file_reviews": [],
+                                                "impact": "No material impact.",
+                                            }
+                                        )
+                                    }
+                                ]
+                            }
                         }
                     ]
                 },
@@ -171,6 +174,7 @@ async def test_gemini_provider_falls_back_after_primary_remains_unavailable(
                                     "text": json.dumps(
                                         {
                                             "summary": "Recovered via fallback.",
+                                            "findings": [],
                                             "file_reviews": [],
                                             "impact": "No material impact.",
                                         }

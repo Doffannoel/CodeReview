@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     max_findings: int = Field(default=10, ge=1, le=50)
     worker_poll_seconds: float = Field(default=2.0, ge=0.1)
     worker_max_attempts: int = Field(default=3, ge=1, le=10)
+    worker_job_timeout_seconds: float = Field(default=90, ge=10, le=3600)
     dry_run: bool = False
 
     @field_validator("retrieval_mode")

@@ -1,5 +1,16 @@
 from codereviewer.diff import parse_unified_diff
 
+
+def test_quoted_paths_and_header_like_added_lines():
+    diff = parse_unified_diff(
+        'diff --git "a/my file.ts" "b/my file.ts"\n'
+        '--- "a/my file.ts"\n+++ "b/my file.ts"\n'
+        "@@ -1 +1 @@\n-old\n+++ value\n"
+    )
+    assert diff.files[0].path == "my file.ts"
+    assert diff.files[0].changed_lines[-1].content == "++ value"
+
+
 DIFF = """diff --git a/app/service.py b/app/service.py
 index 1111111..2222222 100644
 --- a/app/service.py

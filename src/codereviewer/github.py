@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import time
 from dataclasses import dataclass
@@ -9,11 +10,26 @@ import httpx
 import jwt
 
 from codereviewer.config import Settings
+from codereviewer.repo_config import RepoConfig
 
 SUMMARY_MARKER = "<!-- graphmethod-ai-review-summary -->"
 FINDING_MARKER_PREFIX = "<!-- graphmethod-finding:"
 REVIEW_STATUS_CONTEXT = "GraphMethod AI Review"
-EXCLUDED_PARTS = {".git", "node_modules", "vendor", "dist", "build", "generated"}
+QUALITY_CHECK_NAME = "GraphMethod Quality Gate"
+SOURCE_EXTENSIONS = {".py", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"}
+EXCLUDED_PARTS = {
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".next",
+    "node_modules",
+    "vendor",
+    "dist",
+    "build",
+    "generated",
+    "coverage",
+}
 EXCLUDED_NAMES = {
     "package-lock.json",
     "pnpm-lock.yaml",
@@ -34,6 +50,7 @@ class GitHubClient:
         self.settings = settings
         self._client = client or httpx.AsyncClient(timeout=30)
         self._owns_client = client is None
+        self._bot_login: str | None = None
 
     def _app_jwt(self) -> str:
         now = int(time.time())
@@ -44,9 +61,14 @@ class GitHubClient:
         )
 
     async def installation_token(self, installation_id: int) -> str:
+        headers = self._headers(self._app_jwt())
+        if self._bot_login is None:
+            app = await self._client.get(f"{self.settings.github_api_url}/app", headers=headers)
+            app.raise_for_status()
+            self._bot_login = f"{app.json()['slug']}[bot]"
         response = await self._client.post(
             f"{self.settings.github_api_url}/app/installations/{installation_id}/access_tokens",
-            headers=self._headers(self._app_jwt()),
+            headers=headers,
         )
         response.raise_for_status()
         return response.json()["token"]
@@ -97,8 +119,81 @@ class GitHubClient:
         response.raise_for_status()
         return response.json()
 
-    async def list_python_sources(
-        self, token: str, owner: str, repo: str, sha: str
+    async def get_repo_config(self, token: str, owner: str, repo: str, sha: str) -> str | None:
+        response = await self._client.get(
+            f"{self.settings.github_api_url}/repos/{owner}/{repo}/contents/.graphmethod.yml",
+            params={"ref": sha},
+            headers=self._headers(token),
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict) or data.get("type") != "file":
+            raise ValueError(".graphmethod.yml must be a regular file")
+        if data.get("encoding") != "base64" or int(data.get("size", 0)) > 32_768:
+            raise ValueError(".graphmethod.yml is too large or has unsupported encoding")
+        return base64.b64decode(data["content"]).decode("utf-8")
+
+    async def set_quality_check(
+        self,
+        token: str,
+        owner: str,
+        repo: str,
+        sha: str,
+        request_id: str,
+        state: str,
+        summary: str,
+    ) -> None:
+        url = f"{self.settings.github_api_url}/repos/{owner}/{repo}"
+        response = await self._client.get(
+            f"{url}/commits/{sha}/check-runs",
+            headers=self._headers(token),
+            params={"check_name": QUALITY_CHECK_NAME, "per_page": 100, "filter": "latest"},
+        )
+        response.raise_for_status()
+        existing = next(
+            (
+                check
+                for check in response.json().get("check_runs", [])
+                if check.get("external_id") == request_id
+            ),
+            None,
+        )
+        payload = {
+            "name": QUALITY_CHECK_NAME,
+            "external_id": request_id,
+            "status": "in_progress" if state == "pending" else "completed",
+            "output": {"title": QUALITY_CHECK_NAME, "summary": summary[:60_000]},
+        }
+        if state != "pending":
+            payload["conclusion"] = {
+                "success": "success",
+                "failure": "failure",
+                "error": "failure",
+                "neutral": "neutral",
+            }[state]
+        if existing:
+            response = await self._client.patch(
+                f"{url}/check-runs/{existing['id']}",
+                headers=self._headers(token),
+                json=payload,
+            )
+        else:
+            response = await self._client.post(
+                f"{url}/check-runs",
+                headers=self._headers(token),
+                json={**payload, "head_sha": sha},
+            )
+        response.raise_for_status()
+
+    async def list_sources(
+        self,
+        token: str,
+        owner: str,
+        repo: str,
+        sha: str,
+        config: RepoConfig | None = None,
     ) -> list[RepositorySource]:
         response = await self._client.get(
             f"{self.settings.github_api_url}/repos/{owner}/{repo}/git/trees/{sha}",
@@ -118,11 +213,13 @@ class GitHubClient:
             parts = set(PurePosixPath(path).parts)
             if (
                 item.get("type") == "blob"
-                and path.endswith(".py")
+                and PurePosixPath(path).suffix in SOURCE_EXTENSIONS
+                and not (config and config.ignores(path))
                 and not parts.intersection(EXCLUDED_PARTS)
                 and PurePosixPath(path).name not in EXCLUDED_NAMES
-                and int(item.get("size") or 0) <= self.settings.max_source_file_bytes
             ):
+                if int(item.get("size") or 0) > self.settings.max_source_file_bytes:
+                    raise ValueError(f"Source exceeds configured size limit: {path}")
                 candidates.append(item)
 
         if len(candidates) > self.settings.max_repository_files:
@@ -131,27 +228,58 @@ class GitHubClient:
                 f"{self.settings.max_repository_files}"
             )
 
-        sources: list[RepositorySource] = []
-        for item in candidates:
-            blob = await self._client.get(item["url"], headers=self._headers(token))
-            blob.raise_for_status()
-            data = blob.json()
-            if data.get("encoding") != "base64":
-                continue
-            content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
-            sources.append(RepositorySource(path=item["path"], content=content))
-        return sources
+        semaphore = asyncio.Semaphore(8)
+
+        async def fetch(item: dict) -> RepositorySource:
+            async with semaphore:
+                blob = await self._client.get(
+                    f"{self.settings.github_api_url}/repos/{owner}/{repo}/git/blobs/{item['sha']}",
+                    headers=self._headers(token),
+                )
+                blob.raise_for_status()
+                data = blob.json()
+                if data.get("encoding") != "base64":
+                    raise ValueError(f"Unsupported source encoding: {item['path']}")
+                raw = base64.b64decode(data["content"])
+                if len(raw) > self.settings.max_source_file_bytes:
+                    raise ValueError(f"Source exceeds configured size limit: {item['path']}")
+                return RepositorySource(path=item["path"], content=raw.decode("utf-8"))
+
+        return list(await asyncio.gather(*(fetch(item) for item in candidates)))
+
+    async def _comments(self, token: str, path: str) -> list[dict]:
+        comments = []
+        page = 1
+        while True:
+            response = await self._client.get(
+                f"{self.settings.github_api_url}{path}",
+                headers=self._headers(token),
+                params={"per_page": 100, "page": page},
+            )
+            response.raise_for_status()
+            batch = response.json()
+            comments.extend(batch)
+            if len(batch) < 100:
+                return comments
+            page += 1
+
+    def is_own_comment(self, comment: dict) -> bool:
+        app = comment.get("performed_via_github_app") or {}
+        return comment.get("user", {}).get("type") == "Bot" and (
+            (
+                bool(self.settings.github_app_id)
+                and str(app.get("id", "")) == self.settings.github_app_id
+            )
+            or (
+                self._bot_login is not None
+                and comment.get("user", {}).get("login") == self._bot_login
+            )
+        )
 
     async def list_issue_comments(
         self, token: str, owner: str, repo: str, number: int
     ) -> list[dict]:
-        response = await self._client.get(
-            f"{self.settings.github_api_url}/repos/{owner}/{repo}/issues/{number}/comments",
-            headers=self._headers(token),
-            params={"per_page": 100},
-        )
-        response.raise_for_status()
-        return response.json()
+        return await self._comments(token, f"/repos/{owner}/{repo}/issues/{number}/comments")
 
     async def upsert_summary(
         self, token: str, owner: str, repo: str, number: int, body: str
@@ -162,8 +290,7 @@ class GitHubClient:
             (
                 comment
                 for comment in comments
-                if SUMMARY_MARKER in comment.get("body", "")
-                and comment.get("user", {}).get("type") == "Bot"
+                if SUMMARY_MARKER in comment.get("body", "") and self.is_own_comment(comment)
             ),
             None,
         )
@@ -209,13 +336,7 @@ class GitHubClient:
     async def list_review_comments(
         self, token: str, owner: str, repo: str, number: int
     ) -> list[dict]:
-        response = await self._client.get(
-            f"{self.settings.github_api_url}/repos/{owner}/{repo}/pulls/{number}/comments",
-            headers=self._headers(token),
-            params={"per_page": 100},
-        )
-        response.raise_for_status()
-        return response.json()
+        return await self._comments(token, f"/repos/{owner}/{repo}/pulls/{number}/comments")
 
     async def close(self) -> None:
         if self._owns_client:

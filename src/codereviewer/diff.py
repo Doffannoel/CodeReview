@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import shlex
 from dataclasses import dataclass, field
 
 
@@ -57,6 +59,12 @@ class PullRequestDiff:
 
 def _strip_git_prefix(path: str) -> str:
     path = path.strip()
+    if path.startswith('"'):
+        path = ast.literal_eval(path)
+        try:
+            path = path.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
     if path.startswith("a/") or path.startswith("b/"):
         return path[2:]
     return path
@@ -89,10 +97,16 @@ def parse_unified_diff(raw: str) -> PullRequestDiff:
     for line in raw.splitlines():
         if line.startswith("diff --git "):
             finish_current()
-            parts = line.split(" ", 3)
+            header = line[len("diff --git ") :]
+            parts = shlex.split(header, posix=False)
+            if len(parts) != 2:
+                left, separator, right = header.partition(" b/")
+                if not separator:
+                    raise ValueError("Invalid diff file header")
+                parts = [left, "b/" + right]
             current = FileDiff(
-                old_path=_strip_git_prefix(parts[2]),
-                new_path=_strip_git_prefix(parts[3]),
+                old_path=_strip_git_prefix(parts[0]),
+                new_path=_strip_git_prefix(parts[1]),
             )
             current_patch.append(line)
             in_hunk = False
@@ -102,10 +116,10 @@ def parse_unified_diff(raw: str) -> PullRequestDiff:
             continue
 
         current_patch.append(line)
-        if line.startswith("--- "):
+        if not in_hunk and line.startswith("--- "):
             current.old_path = _strip_git_prefix(line[4:].split("\t", 1)[0])
             continue
-        if line.startswith("+++ "):
+        if not in_hunk and line.startswith("+++ "):
             current.new_path = _strip_git_prefix(line[4:].split("\t", 1)[0])
             continue
         if line.startswith("@@ "):

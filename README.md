@@ -1,5 +1,9 @@
 # GraphMethod AI Pull Request Reviewer
 
+Implementasi Master SRS 3.0.0, pemetaan FR-01–FR-08, konfigurasi repo, prosedur
+upgrade, dan batas verifikasi tersedia di [laporan SRS](docs/06-srs-implementation.md).
+Contoh konfigurasi repo: [`.graphmethod.example.yml`](.graphmethod.example.yml).
+
 > Untuk deployment ke VM Hostinger yang memakai Jenkins, Kong, dan HTTPS, ikuti
 > [DEPLOYMENT_HOSTINGER.md](DEPLOYMENT_HOSTINGER.md).
 > Untuk memasang Certificate, SNI, Service, dan Route dari halaman Kong Manager,
@@ -13,7 +17,8 @@ Hasil review muncul langsung di GitHub dalam bentuk:
 - Inline review comments pada baris yang berubah.
 - Suggested change yang dapat diterapkan developer.
 - Review dengan status `COMMENT`, bukan automatic approval atau rejection.
-- Required commit status yang `pending` selama analisis dan `success` setelah selesai.
+- Quality gate berbobot dengan Check Run dan commit status: pending selama analisis,
+  success jika skor memenuhi threshold, failure jika tidak.
 
 Dokumentasi arsitektur lengkap tersedia di [`docs/README.md`](docs/README.md).
 
@@ -34,7 +39,7 @@ PostgreSQL Job Queue
         ▼
 Python Review Worker
         ├── GitHub API
-        ├── Python AST Indexer
+        ├── Tree-sitter Python / JS / TS Indexer
         ├── Neo4j Graph Retrieval
         ├── Gemini/LLM Provider
         └── GitHub Review Publisher
@@ -106,8 +111,9 @@ Gunakan permission minimum:
 | Metadata | Read | Informasi repository |
 | Contents | Read | Membaca source dan commit |
 | Pull requests | Read and write | Membaca diff dan menulis review |
+| Issues | Read | Menerima event Issue comment untuk `/review` |
 | Commit statuses | Read and write | Menampilkan status analisis dan memblokir merge |
-| Checks | No access | Tidak diperlukan karena GraphMethod memakai commit status |
+| Checks | Read and write | Quality gate dengan skor dan threshold per repository |
 
 Jika App sudah pernah di-install, perubahan permission harus disetujui kembali pada
 installation repository/organization sebelum status dapat dibuat.
@@ -120,6 +126,7 @@ Subscribe ke event:
 
 ```text
 Pull request
+Issue comment
 ```
 
 Action yang diproses oleh aplikasi:
@@ -252,7 +259,7 @@ DRY_RUN=false
 | `GRAPH_MAX_HOPS` | `2` | Maksimum kedalaman traversal graph |
 | `GRAPH_MAX_NODES_PER_SYMBOL` | `12` | Maksimum related context per changed symbol |
 | `CONTEXT_TOKEN_BUDGET` | `10000` | Budget perkiraan diff dan graph context |
-| `MAX_REPOSITORY_FILES` | `500` | Batas file Python yang di-index |
+| `MAX_REPOSITORY_FILES` | `500` | Batas file Python/JS/TS yang di-index |
 | `MAX_SOURCE_FILE_BYTES` | `250000` | Batas ukuran satu file source |
 | `MAX_CHANGED_FILES` | `30` | Batas jumlah file PR |
 | `MAX_CHANGED_LINES` | `2000` | Batas changed lines PR |
@@ -533,8 +540,9 @@ Kembalikan hostname `.env` ke `postgres` dan `neo4j` sebelum menjalankan API/wor
 
 Setiap PR/commit yang diterima membuat status bernama `GraphMethod AI Review`:
 
-- `pending` ketika webhook diterima dan selama retry analisis.
-- `success` setelah review berhasil dipublikasikan.
+- `pending` ketika worker mulai memproses dan selama retry analisis.
+- `success` setelah publikasi dan skor memenuhi threshold.
+- `failure` jika skor di bawah threshold.
 - `error` jika seluruh `WORKER_MAX_ATTEMPTS` gagal.
 
 Supaya tombol merge benar-benar tertahan, jadikan status tersebut wajib pada target
@@ -542,6 +550,9 @@ branch. Setelah GraphMethod pernah membuat status pada sebuah PR, buka repositor
 **Settings → Rules → Rulesets** (atau **Branches → Branch protection rule**), aktifkan
 **Require status checks to pass**, lalu pilih `GraphMethod AI Review`. Aktifkan juga
 aturan agar branch harus up to date jika kebijakan repository membutuhkannya.
+
+Check Run `GraphMethod Quality Gate` juga diterbitkan; jadikan check ini wajib
+untuk instalasi baru. Komentar `/review` dari kolaborator pada PR memicu review ulang.
 
 Tanpa ruleset/branch protection, status tetap terlihat loading tetapi GitHub masih
 mengizinkan user yang memiliki akses untuk merge.
@@ -697,7 +708,7 @@ Kemungkinan penyebab:
 - PR hanya mengubah module-level code.
 - Parser tidak berhasil menyelesaikan dynamic call.
 - Target function memiliki nama ambigu.
-- Repository bukan Python.
+- Repository tidak memiliki source Python, JavaScript/JSX, atau TypeScript/TSX.
 
 Reviewer tetap dapat memproses diff, tetapi akan mencatat bahwa tidak ada additional graph context.
 
@@ -744,13 +755,13 @@ GitHub integration, graph retrieval, validation, dan publishing tidak perlu ditu
 
 ## 20. Batasan prototype
 
-- Python adalah satu-satunya bahasa yang diparse secara penuh.
+- Tree-sitter memparse Python, JavaScript/JSX, dan TypeScript/TSX.
 - Name-based call resolution bersifat konservatif dan tidak dapat menyelesaikan seluruh dynamic dispatch.
 - Repository di-index melalui GitHub API dan ditujukan untuk repository prototype kecil sampai menengah.
-- Database schema masih dibuat dengan SQLAlchemy metadata; gunakan Alembic migration sebelum production.
-- Check Runs belum digunakan; merge gate memakai commit status
-  `GraphMethod AI Review`. Command manual seperti `/review` belum tersedia.
-- GitHub pagination lanjutan dan repository sangat besar memerlukan strategi indexing terpisah.
+- Upgrade schema SRS PostgreSQL tersedia saat startup; hentikan worker versi lama
+  sebelum upgrade dan ikuti [prosedur upgrade](docs/06-srs-implementation.md).
+- Check Runs, `/review`, konfigurasi repo dan quality gate sudah tersedia.
+- Tree repository yang truncated atau diff di atas budget ditolak; komentar GitHub dipaginasi.
 - Live integration memerlukan valid GitHub App, Gemini, PostgreSQL, dan Neo4j credentials.
 
 ## 21. Perintah cepat

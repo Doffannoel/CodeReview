@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
@@ -9,8 +8,6 @@ from codereviewer.config import Settings
 from codereviewer.github import GitHubClient
 from codereviewer.queue import JobQueue
 from codereviewer.security import verify_github_signature
-
-logger = logging.getLogger(__name__)
 
 
 def create_webhook_router(
@@ -39,8 +36,10 @@ def create_webhook_router(
 
         try:
             payload = json.loads(body)
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=422, detail="Webhook payload must be an object")
 
         action = str(payload.get("action", ""))
         try:
@@ -50,26 +49,8 @@ def create_webhook_router(
                 action=action,
                 payload=payload,
             )
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-        if job is not None and job.status in {"queued", "processing"} and not settings.dry_run:
-            try:
-                token = await github.installation_token(job.installation_id)
-                await github.set_commit_status(
-                    token,
-                    job.owner,
-                    job.repository,
-                    job.head_sha,
-                    "pending",
-                    "GraphMethod is analyzing this pull request...",
-                )
-            except Exception as exc:
-                logger.exception("failed to create pending status for review job %s", job.id)
-                raise HTTPException(
-                    status_code=502,
-                    detail="Review queued, but the required GitHub status could not be created",
-                ) from exc
 
         return {
             "accepted": job is not None and not duplicate,

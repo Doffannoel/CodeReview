@@ -63,8 +63,17 @@ class GraphRetriever:
         sha: str,
         diff: PullRequestDiff,
         token_budget: int,
+        use_old_lines: bool = False,
     ) -> tuple[list[ContextItem], list[ContextItem]]:
-        changed_lines = {file.path: file.new_changed_lines for file in diff.files}
+        changed_lines = {
+            (file.old_path if use_old_lines else file.path): (
+                {line.old_line for line in file.changed_lines if line.old_line is not None}
+                if use_old_lines
+                else file.new_changed_lines
+            )
+            for file in diff.files
+        }
+        changed_lines = {path: lines for path, lines in changed_lines.items() if lines}
         seeds = await self.store.changed_symbols(repository_id, sha, changed_lines)
         contexts = await self.store.retrieve_context(
             repository_id,

@@ -14,12 +14,16 @@ API dan worker adalah dua process berbeda tetapi membangun dependency yang sama:
 
 ### Webhook dan enqueue
 
-`webhooks.py` mempertahankan body mentah untuk pemeriksaan signature, memvalidasi header delivery/event, lalu melakukan JSON decode. Queue hanya menerima event `pull_request` dengan action `opened`, `synchronize`, `reopened`, atau `ready_for_review`.
+`webhooks.py` memeriksa signature pada body mentah, header, dan JSON. Queue menerima
+`pull_request` (opened/synchronize/reopened/ready_for_review) serta `issue_comment.created`
+berisi `/review` dari kolaborator PR. Webhook tidak memanggil API GitHub.
 
 Dua lapis deduplikasi tersedia:
 
 1. `WebhookDelivery.delivery_id` adalah primary key, sehingga redelivery yang sama tidak membuat job baru.
-2. Unique constraint `(repository_id, pull_request_number, head_sha)` mencegah review commit PR yang sama dibuat dua kali walau delivery berbeda.
+2. Unique constraint `(repository_id, pull_request_number, head_sha, request_key)`
+   mencegah job otomatis ganda. Partial unique index repository/request_key mencegah
+   komentar manual yang sama diproses ulang setelah head SHA diresolusikan.
 
 ## State machine job
 
@@ -62,7 +66,12 @@ Urutan `ReviewOrchestrator.execute()`:
 | `review_findings` | Fingerprint, lokasi, severity, category, title, rendered body. |
 | `retrieved_contexts` | Symbol, relation, distance, rank, token count, flag selected. |
 
-`prompt_version` default-nya `v1`, tetapi saat ini belum dipakai untuk memilih template prompt.
+Run baru mencatat `prompt_version=smp-v3`. `review_evaluations` menyimpan SHA,
+skor, threshold, status kelulusan, konfigurasi, coverage dan jumlah konteks.
+
+Claim PostgreSQL diserialisasi melalui advisory lock singkat dan hanya satu job per PR
+dapat processing. Worker membatasi satu attempt dengan `WORKER_JOB_TIMEOUT_SECONDS`
+(default 90). Job processing yang lease-nya habis direqueue setelah timeout + 30 detik.
 
 ## Parsing diff dan lokasi finding
 

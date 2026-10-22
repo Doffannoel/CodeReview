@@ -44,7 +44,7 @@ async def worker_loop() -> None:
     logger.info("review worker started")
     try:
         while not stop.is_set():
-            job = await queue.claim()
+            job = await queue.claim(settings.worker_job_timeout_seconds + 30)
             if job is None:
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=settings.worker_poll_seconds)
@@ -59,38 +59,24 @@ async def worker_loop() -> None:
                     job.repository,
                     job.pull_request_number,
                 )
-                token = await github.installation_token(job.installation_id)
-                if not settings.dry_run:
-                    await github.set_commit_status(
-                        token,
-                        job.owner,
-                        job.repository,
-                        job.head_sha,
-                        "pending",
-                        "GraphMethod is analyzing this pull request...",
-                    )
-                await reviewer.execute(job)
-                if not settings.dry_run:
-                    await github.set_commit_status(
-                        token,
-                        job.owner,
-                        job.repository,
-                        job.head_sha,
-                        "success",
-                        "GraphMethod analysis completed.",
-                    )
+                if job.attempt > settings.worker_max_attempts:
+                    raise RuntimeError("Review exhausted attempts after worker interruption")
+                async with asyncio.timeout(settings.worker_job_timeout_seconds):
+                    await reviewer.execute(job)
                 await queue.complete(job.id)
             except Exception as exc:
                 logger.exception("review job %s failed", job.id)
-                terminal = await queue.fail(job.id, str(exc), settings.worker_max_attempts)
-                if terminal and not settings.dry_run:
+                terminal = await queue.fail(
+                    job.id,
+                    str(exc) or type(exc).__name__,
+                    settings.worker_max_attempts,
+                )
+                if terminal and not settings.dry_run and job.head_sha:
                     try:
                         token = await github.installation_token(job.installation_id)
-                        await github.set_commit_status(
+                        await reviewer._status(
                             token,
-                            job.owner,
-                            job.repository,
-                            job.head_sha,
+                            job,
                             "error",
                             "GraphMethod analysis failed after all retry attempts.",
                         )

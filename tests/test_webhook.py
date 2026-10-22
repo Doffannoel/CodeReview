@@ -66,16 +66,7 @@ def test_webhook_accepts_valid_signature() -> None:
 
     assert response.status_code == 202
     assert response.json() == {"accepted": True, "duplicate": False, "job_id": "job-1"}
-    assert github.statuses == [
-        (
-            "installation-token",
-            "owner",
-            "repo",
-            "abc123",
-            "pending",
-            "GraphMethod is analyzing this pull request...",
-        )
-    ]
+    assert github.statuses == []  # External API calls belong in the durable worker.
 
 
 def test_webhook_rejects_invalid_signature() -> None:
@@ -96,3 +87,20 @@ def test_webhook_rejects_invalid_signature() -> None:
     )
 
     assert response.status_code == 401
+
+
+def test_non_object_webhook_returns_validation_error():
+    app = FastAPI()
+    app.include_router(
+        create_webhook_router(
+            Settings(github_webhook_secret="secret"),
+            FakeQueue(),
+            FakeGitHub(),
+        )
+    )
+    response = TestClient(app).post(
+        "/webhooks/github",
+        content=b"[]",
+        headers=signed_headers(b"[]", "secret"),
+    )
+    assert response.status_code == 422
